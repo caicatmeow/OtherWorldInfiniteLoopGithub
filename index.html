@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<!--
+WebFullscreen
+全屏自适应网页模板：Canvas 填满整个浏览器窗口，随窗口大小实时自适应缩放（桌面与移动端通用，无固定像素尺寸）。
+-->
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes">
+    <title>Unity WebGL Player | Otherworld Infinite Loop</title>
+    <link rel="stylesheet" href="TemplateData/style.css">
+</head>
+<body>
+    <div id="unity-container">
+        <canvas id="unity-canvas" tabindex="-1"></canvas>
+        <div id="unity-loading-bar">
+            <div id="unity-logo">LOADING</div>
+            <div id="unity-progress-bar-empty">
+                <div id="unity-progress-bar-full"></div>
+            </div>
+        </div>
+        <div id="unity-warning"></div>
+        <div id="unity-footer">
+            <div id="unity-fullscreen-button"></div>
+        </div>
+    </div>
+    <script>
+
+        var container = document.querySelector("#unity-container");
+        var canvas = document.querySelector("#unity-canvas");
+        var loadingBar = document.querySelector("#unity-loading-bar");
+        var progressBarFull = document.querySelector("#unity-progress-bar-full");
+        var fullscreenButton = document.querySelector("#unity-fullscreen-button");
+        var warningBanner = document.querySelector("#unity-warning");
+
+        // Shows a temporary message banner/ribbon for a few seconds, or
+        // a permanent error message on top of the canvas if type=='error'.
+        function unityShowBanner(msg, type) {
+            function updateBannerVisibility() {
+                warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+            }
+            var div = document.createElement('div');
+            div.innerHTML = msg;
+            warningBanner.appendChild(div);
+            if (type == 'error') div.style = 'background: red; padding: 10px;';
+            else {
+                if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+                setTimeout(function() {
+                    warningBanner.removeChild(div);
+                    updateBannerVisibility();
+                }, 5000);
+            }
+            updateBannerVisibility();
+        }
+
+        // 让画布初始像素尺寸与浏览器窗口一致。
+        // 加载完成后 Unity 默认会自动把渲染分辨率同步到画布 DOM 尺寸（×设备像素比），
+        // 所以窗口缩放/全屏时画面会实时自适应，无需写死任何固定像素。
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // ============================================================
+        // 网页端「后台依旧挂机」（标签页隐藏/最小化时游戏照常运行）：
+        // 浏览器会暂停隐藏标签页的 requestAnimationFrame（rAF），导致 Unity 主循环冻结。
+        // 三层保障：
+        //  1) rAF 兜底：文档隐藏时改用 setTimeout 驱动主循环，保证循环永不停止。
+        //  2) 静音音频保活：首次用户交互后启动近无声的 AudioContext，浏览器把本标签页视为
+        //     「正在播放音频」而不做节流/挂起（Chrome 下保持 60fps 后台运行，这是主力保障）。
+        //  3) 兜底结算：回到前台时通知 Unity 补算可能丢失的挂机时间（仅个别彻底冻结主循环的
+        //     浏览器会用到，见 C# RuntimeBackgroundRunner.OnWebGLVisibilityReturn）。
+        // ============================================================
+        var unityInstance = null;
+        var _timerHandles = new Set();
+        var _nativeRAF = window.requestAnimationFrame.bind(window);
+        var _nativeCancelAF = window.cancelAnimationFrame.bind(window);
+        window.requestAnimationFrame = function (cb) {
+            if (document.hidden) {
+                // 隐藏期间用 setTimeout 兜底。浏览器可能把隐藏标签页的定时器节流到约 1 次/秒，
+                // 但游戏按 Time.deltaTime 推进，模拟时间仍按真实时间前进（后台挂机）。
+                var id = setTimeout(function () {
+                    _timerHandles.delete(id);
+                    cb(performance.now());
+                }, 16);
+                _timerHandles.add(id);
+                return id;
+            }
+            return _nativeRAF(cb);
+        };
+        window.cancelAnimationFrame = function (handle) {
+            if (_timerHandles.has(handle)) {
+                _timerHandles.delete(handle);
+                clearTimeout(handle);
+                return;
+            }
+            _nativeCancelAF(handle);
+        };
+
+        // 静音音频保活（自动播放策略要求：首次用户交互后才能启动/恢复）
+        // 频率/增益选择：10Hz 低于人耳听阈（20Hz 以下为次声波），增益 0.02 极低，
+        // 人耳不可闻；但输出对浏览器而言非零，可被判定为「正在播放音频」从而免除隐藏页节流。
+        var _bgAudioCtx = null;
+        function startBackgroundAudio() {
+            if (_bgAudioCtx) return;
+            var AC = window.AudioContext || window.webkitAudioContext;
+            if (!AC) return;
+            try {
+                var ctx = new AC();
+                var osc = ctx.createOscillator();
+                var gain = ctx.createGain();
+                osc.frequency.value = 10;   // 次声波，人耳不可闻
+                gain.gain.value = 0.02;     // 极低音量，避免打扰
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                if (ctx.state === "suspended") ctx.resume();
+                _bgAudioCtx = ctx;
+            } catch (e) { /* 忽略：无音频环境不阻塞游戏 */ }
+        }
+        ["pointerdown", "keydown", "touchstart"].forEach(function (evt) {
+            window.addEventListener(evt, startBackgroundAudio, { passive: true });
+        });
+
+        // 标签页隐藏/回到前台：
+        //  - 隐藏：通知 Unity 放宽时间钳制（见 C# RuntimeBackgroundRunner.OnWebGLVisibilityHide），
+        //    让被节流到 ~1fps 的帧也能按真实时间推进模拟；
+        //  - 回前台：恢复钳制并兜底结算（见 C# OnWebGLVisibilityReturn），同时主动恢复音频保活
+        //    （部分浏览器长时间隐藏后会挂起 AudioContext）。
+        document.addEventListener("visibilitychange", function () {
+            if (!unityInstance) return;
+            if (document.hidden) {
+                unityInstance.SendMessage("RuntimeBackgroundRunner", "OnWebGLVisibilityHide");
+            } else {
+                unityInstance.SendMessage("RuntimeBackgroundRunner", "OnWebGLVisibilityReturn");
+                startBackgroundAudio();
+                if (_bgAudioCtx && _bgAudioCtx.state === "suspended") _bgAudioCtx.resume();
+            }
+        });
+
+        var buildUrl = "Build";
+        var loaderUrl = buildUrl + "/OtherWorldInfiniteLoopGithub.loader.js";
+        var config = {
+            dataUrl: buildUrl + "/OtherWorldInfiniteLoopGithub.data",
+            frameworkUrl: buildUrl + "/OtherWorldInfiniteLoopGithub.framework.js",
+            codeUrl: buildUrl + "/OtherWorldInfiniteLoopGithub.wasm",
+            streamingAssetsUrl: "StreamingAssets",
+            companyName: "Vegacat Games",
+            productName: "Otherworld Infinite Loop",
+            productVersion: "0.51",
+            showBanner: unityShowBanner,
+            // 网页端关键：开启后 Application.persistentDataPath 下的所有文件写入
+            // （存档、设置、待传遥测队列）会自动同步到浏览器 IndexedDB。
+            // 不开启则玩家刷新/关闭页面后进度全部丢失，无法"点开即玩、关掉续玩"。
+            autoSyncPersistentDataPath: true,
+        };
+
+        loadingBar.style.display = "block";
+
+        var script = document.createElement("script");
+        script.src = loaderUrl;
+        script.onload = () => {
+            createUnityInstance(canvas, config, (progress) => {
+                progressBarFull.style.width = 100 * progress + "%";
+            }).then((instance) => {
+                unityInstance = instance;
+                loadingBar.style.display = "none";
+                // 让画布获得焦点：玩家点开链接后无需额外点击，键盘输入（如 F2 开发者快捷键）即可生效
+                canvas.focus();
+                fullscreenButton.onclick = () => {
+                    unityInstance.SetFullscreen(1);
+                };
+            }).catch((message) => {
+                alert(message);
+            });
+        };
+
+        document.body.appendChild(script);
+
+    </script>
+</body>
+</html>

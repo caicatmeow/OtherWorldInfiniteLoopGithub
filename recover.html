@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>存档抢救工具 · 异世界无限循环</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px 60px;
+    background: #14161c; color: #e6e8ee;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    line-height: 1.7; font-size: 15px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 21px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 26px 0 10px; color: #9fb0d0; font-weight: 600; }
+  .sub { color: #8b93a7; font-size: 13px; margin: 0 0 18px; }
+  .box {
+    background: #1d2029; border: 1px solid #2c313d;
+    border-radius: 10px; padding: 14px 16px; margin: 0 0 14px;
+  }
+  .box.warn { border-color: #6b5a22; background: #262218; }
+  .box.ok   { border-color: #2b5f3a; background: #17251c; }
+  .card {
+    background: #1d2029; border: 1px solid #2c313d;
+    border-radius: 10px; padding: 12px 14px; margin: 0 0 10px;
+  }
+  .card .name { font-weight: 600; word-break: break-all; }
+  .card .meta { color: #8b93a7; font-size: 13px; margin: 2px 0 10px; }
+  .dir { color: #7f8ba3; font-size: 13px; margin: 18px 0 8px; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    border-radius: 8px; padding: 9px 16px; margin-right: 8px;
+    background: #2f6fd0; border: 1px solid #2f6fd0; color: #fff;
+  }
+  button.ghost { background: transparent; border-color: #3a4152; color: #c8cfdd; }
+  button:active { opacity: .8; }
+  textarea {
+    display: none; width: 100%; height: 130px; margin-top: 10px;
+    background: #0f1116; color: #cfd6e4; border: 1px solid #2c313d;
+    border-radius: 8px; padding: 10px; font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px; word-break: break-all;
+  }
+  ol, ul { margin: 8px 0 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  code { background: #0f1116; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .muted { color: #8b93a7; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>存档抢救工具</h1>
+  <p class="sub" id="origin"></p>
+
+  <div id="status" class="box">正在读取本机存档数据…</div>
+
+  <h2>第一步：找到并复制存档</h2>
+  <div id="list"></div>
+  <textarea id="out" readonly></textarea>
+
+  <h2>第二步：把存档导回游戏</h2>
+  <ol>
+    <li>回到游戏，打开 <b>设置</b> 面板，找到 <b>存档</b> 区域（存档 1 / 存档 2 / …）。</li>
+    <li>在你想恢复到的那个存档位旁边点 <b>导入</b> 按钮。</li>
+    <li>游戏会问「是否从剪贴板导入并切换到存档 X？」→ 点确定。</li>
+    <li>导入后游戏会自动切换到该存档，进度就回来了。</li>
+  </ol>
+  <p class="muted">说明：这个操作只是往目标存档位写一份数据，不会动到游戏里其它存档位的进度。如果导入后提示「剪切板中的存档数据不合法」，说明复制没成功，请回到上面重试一次（或点「下载」保存文件后联系我们）。</p>
+
+  <h2>找不到存档怎么办</h2>
+  <ul class="muted">
+    <li>必须在<b>原来玩游戏的那台设备、那个浏览器</b>上打开本页（换手机/换浏览器都读不到）。</li>
+    <li>网页地址的<b>前缀</b>要一致：以前用 <code>http://</code> 就还用 http，以前用 <code>https://</code> 就改成 https 再打开本页。</li>
+    <li>如果玩家清理过浏览器数据（"清除浏览记录/网站数据"），或者浏览器在存储紧张时自动清理过，数据就真的没了，无法恢复。</li>
+  </ul>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var DB_NAME = '/idbfs';      // Unity WebGL 的虚拟文件系统数据库（固定名字）
+  var STORE   = 'FILE_DATA';   // 里面存文件的固定表名
+
+  var statusEl = document.getElementById('status');
+  var listEl   = document.getElementById('list');
+  var outEl    = document.getElementById('out');
+
+  document.getElementById('origin').textContent =
+    '当前页面地址：' + location.origin +
+    '（存档数据只属于这个地址。换 http/https、换域名都读不到，必须先改成当初玩游戏的地址再打开本页。）';
+
+  /* ---------- 复制（含 http 下的兜底方案） ---------- */
+  function legacyCopy(text) {
+    outEl.style.display = 'block';
+    outEl.value = text;
+    try {
+      outEl.focus();
+      outEl.select();
+      outEl.setSelectionRange(0, outEl.value.length);
+      return document.execCommand('copy');
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function copyText(text, btn) {
+    var label = btn.textContent;
+    function done(ok) {
+      btn.textContent = ok ? '已复制 ✓' : '请在上方框里手动复制';
+      setTimeout(function () { btn.textContent = label; }, 1800);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { done(true); },
+        function () { done(legacyCopy(text)); }
+      );
+    } else {
+      done(legacyCopy(text));
+    }
+  }
+
+  /* ---------- 下载备份 ---------- */
+  function downloadFile(item) {
+    try {
+      var blob = new Blob([item.text], { type: 'application/octet-stream' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = item.base;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+    } catch (e) {
+      outEl.style.display = 'block';
+      outEl.value = item.text;
+      alert('浏览器不支持自动下载，请在上方文本框里手动全选复制。');
+    }
+  }
+
+  /* ---------- 工具 ---------- */
+  function formatTime(ts) {
+    try {
+      if (ts instanceof Date) return ts.toLocaleString();
+      if (typeof ts === 'number' && ts > 0) {
+        return new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleString();
+      }
+    } catch (e) {}
+    return '时间未知';
+  }
+
+  function toBytes(v) {
+    if (!v) return null;
+    if (v instanceof Uint8Array) return v;
+    if (typeof ArrayBuffer !== 'undefined') {
+      if (v instanceof ArrayBuffer) return new Uint8Array(v);
+      if (v.buffer instanceof ArrayBuffer) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+    }
+    return null;
+  }
+
+  function decodeUtf8(bytes) {
+    try { return new TextDecoder('utf-8').decode(bytes); } catch (e) {}
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    try { return decodeURIComponent(escape(s)); } catch (e2) { return s; }
+  }
+
+  /* ---------- 读取浏览器里的存档 ---------- */
+  function openDb(cb) {
+    var req;
+    try {
+      req = indexedDB.open(DB_NAME);
+    } catch (e) { cb(e); return; }
+
+    // 数据库不存在时按 Unity 自己的结构建好（Unity 之后打开会自动升到它需要的版本）
+    req.onupgradeneeded = function (e) {
+      var db = e.target.result;
+      var trans = e.target.transaction;
+      var store;
+      if (db.objectStoreNames.contains(STORE)) store = trans.objectStore(STORE);
+      else store = db.createObjectStore(STORE);
+      if (!store.indexNames.contains('timestamp')) {
+        store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+    };
+    req.onsuccess = function () { cb(null, req.result); };
+    req.onerror = function () { cb(req.error || new Error('无法打开浏览器数据库')); };
+  }
+
+  function loadSaves(cb) {
+    openDb(function (err, db) {
+      if (err) { cb(err, []); return; }
+
+      var req;
+      try {
+        var tx = db.transaction([STORE], 'readonly');
+        req = tx.objectStore(STORE).openCursor();
+      } catch (e) {
+        try { db.close(); } catch (e2) {}
+        cb(e, []);
+        return;
+      }
+
+      var found = [];
+      req.onsuccess = function (e) {
+        var cursor = e.target.result;
+        if (!cursor) {
+          try { db.close(); } catch (e2) {}
+          cb(null, found);
+          return;
+        }
+        try {
+          var key = String(cursor.key || '');
+          var base = key.substring(key.lastIndexOf('/') + 1);
+          if (/\.json$/i.test(base)) {
+            var rec = cursor.value || {};
+            var bytes = toBytes(rec.contents);
+            if (bytes && bytes.length > 0) {
+              var text = decodeUtf8(bytes);
+              if (text && text.length > 0) {
+                var dir = key.substring(0, key.lastIndexOf('/'));
+                found.push({
+                  base: base,
+                  text: text,
+                  size: bytes.length,
+                  time: rec.timestamp,
+                  dirName: dir.substring(dir.lastIndexOf('/') + 1)
+                });
+              }
+            }
+          }
+        } catch (e3) {}
+        cursor.continue();
+      };
+      req.onerror = function () {
+        try { db.close(); } catch (e2) {}
+        cb(req.error || new Error('读取浏览器数据库失败'), []);
+      };
+    });
+  }
+
+  /* ---------- 渲染 ---------- */
+  function buildCard(item) {
+    var card = document.createElement('div');
+    card.className = 'card';
+
+    var name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = item.base;
+    card.appendChild(name);
+
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = '存档时间：' + formatTime(item.time) +
+                       '　·　大小：' + (item.size / 1024).toFixed(1) + ' KB';
+    card.appendChild(meta);
+
+    var btnCopy = document.createElement('button');
+    btnCopy.textContent = '复制';
+    btnCopy.onclick = function () { copyText(item.text, btnCopy); };
+    card.appendChild(btnCopy);
+
+    var btnDown = document.createElement('button');
+    btnDown.className = 'ghost';
+    btnDown.textContent = '下载';
+    btnDown.onclick = function () { downloadFile(item); };
+    card.appendChild(btnDown);
+
+    return card;
+  }
+
+  function render(err, items) {
+    if (err) {
+      statusEl.className = 'box warn';
+      statusEl.textContent = '读取失败：' + (err.message || err) +
+        '。请换用普通模式（不要用无痕/隐私窗口）重新打开本页。';
+      return;
+    }
+
+    if (items.length === 0) {
+      statusEl.className = 'box warn';
+      statusEl.textContent = '这台设备、这个浏览器、这个网址下没有找到任何存档数据。请对照下方「找不到存档怎么办」排查。';
+      return;
+    }
+
+    items.sort(function (a, b) {
+      var ta = (a.time instanceof Date) ? a.time.getTime() : (typeof a.time === 'number' ? a.time : 0);
+      var tb = (b.time instanceof Date) ? b.time.getTime() : (typeof b.time === 'number' ? b.time : 0);
+      if (tb !== ta) return tb - ta;
+      return a.base < b.base ? -1 : (a.base > b.base ? 1 : 0);
+    });
+
+    statusEl.className = 'box ok';
+    statusEl.textContent = '共找到 ' + items.length + ' 个存档文件。' +
+      '一般选「存档时间」最新的那个复制；如果日期对不上，可以逐个试（导入不会破坏其它存档）。';
+
+    // 按抽屉（Unity 给每个网址目录单开的文件夹）分组显示，方便分辨旧数据
+    var groups = {};
+    var order = [];
+    items.forEach(function (it) {
+      if (!groups[it.dirName]) { groups[it.dirName] = []; order.push(it.dirName); }
+      groups[it.dirName].push(it);
+    });
+
+    listEl.innerHTML = '';
+    order.forEach(function (dirName) {
+      var head = document.createElement('div');
+      head.className = 'dir';
+      head.textContent = '存档文件夹 ' + dirName.substring(0, 8) + '…（' + groups[dirName].length + ' 个）';
+      listEl.appendChild(head);
+
+      groups[dirName].forEach(function (it) {
+        listEl.appendChild(buildCard(it));
+      });
+    });
+  }
+
+  loadSaves(render);
+})();
+</script>
+</body>
+</html>

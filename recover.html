@@ -46,10 +46,31 @@
   li { margin: 4px 0; }
   code { background: #0f1116; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
   .muted { color: #8b93a7; font-size: 13px; }
+
+  /* 移动端提示条：非阻断式，竖屏时顶部显示「建议横屏」提示，可点掉 */
+  #rotate-hint {
+    display: none;
+    position: sticky; top: 0; z-index: 50;
+    margin: -20px -16px 18px; padding: 12px 44px 12px 16px;
+    background: #1c2230; border-bottom: 1px solid #2c313d;
+    font-size: 13px; color: #c8cfdd;
+    align-items: center; gap: 10px;
+  }
+  #rotate-hint.show { display: flex; }
+  #rotate-hint b { color: #fff; font-weight: 600; }
+  #hint-close {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    border: none; background: transparent; color: #8b93a7;
+    font-size: 18px; line-height: 1; padding: 8px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div id="rotate-hint">
+    <b>建议横屏操作</b><span>旋转手机可获得更好的操作体验 / Please rotate your device for a better experience</span>
+    <button id="hint-close" aria-label="关闭">×</button>
+  </div>
   <h1>存档抢救工具</h1>
   <p class="sub" id="origin"></p>
 
@@ -319,6 +340,35 @@
   }
 
   loadSaves(render);
+
+  /* ---------- 移动端非阻断式横屏提示条 ---------- */
+  // 竖屏时在顶部显示一条「建议横屏」提示，可点 × 关闭；转横后自动隐藏。
+  (function () {
+    'use strict';
+    var hint = document.getElementById('rotate-hint');
+    var closeBtn = document.getElementById('hint-close');
+    if (!hint || !closeBtn) return;
+    var mq = window.matchMedia ? window.matchMedia('(orientation: portrait)') : null;
+    function isMobile() {
+      return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+             (navigator.maxTouchPoints && navigator.maxTouchPoints > 1);
+    }
+    function update() {
+      if (!isMobile()) { hint.classList.remove('show'); return; }
+      // 兜底：优先媒体查询，兼容老浏览器时用宽高比
+      var portrait = mq ? mq.matches : (window.innerHeight > window.innerWidth);
+      hint.classList.toggle('show', portrait);
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function () {
+        hint.style.display = 'none';
+      });
+    }
+    if (mq && mq.addEventListener) mq.addEventListener('change', update);
+    else window.addEventListener('resize', update);
+    window.addEventListener('orientationchange', update);
+    update();
+  })();
 })();
 </script>
 </body>

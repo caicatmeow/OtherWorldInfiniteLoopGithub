@@ -177,6 +177,21 @@ html, body {
     letter-spacing: 0.5px;
 }
 
+/* 兜底按钮：方向检测万一不兼容/手机自动旋转被关，
+   玩家可手动关掉提示层继续游玩 */
+#rotate-overlay-close {
+    margin-top: 28px;
+    padding: 10px 22px;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 999px;
+    background: transparent;
+    color: #fff;
+    font-size: 14px;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    cursor: pointer;
+}
+#rotate-overlay-close:active { opacity: 0.75; }
+
 /* 竖屏时显示；横屏时隐藏（class 由 index.html 的 JS 切换） */
 #unity-rotate-overlay.show { display: flex; }
 

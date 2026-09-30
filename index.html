@@ -30,6 +30,7 @@ WebFullscreen
         <div id="unity-rotate-overlay">
             <div class="rotate-anim" aria-hidden="true"></div>
             <p class="rotate-text">请旋转设备横屏游玩<br><span>Please rotate your device to landscape</span></p>
+            <button type="button" id="rotate-overlay-close">我已横屏，继续 / I'm in landscape, continue</button>
         </div>
     </div>
     <script>
@@ -163,9 +164,30 @@ WebFullscreen
                    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
         }
         var _isTouchDevice = isTouchDevice();
+
+        // 判断当前是否竖屏。注意：不能用「窗口宽高比」作为第一信号——
+        // 手机上 orientationchange 事件触发时，窗口宽高常常还是旧的（未切换完），
+        // 会误判导致提示层卡住。顺序必须为：
+        //   1) screen.orientation 角度（方向事件后立即是最新值，最可靠）
+        //   2) 老式 window.orientation
+        //   3) CSS 媒体查询 orientation
+        //   4) 窗口宽高比（仅作终极兜底）
         function isPortrait() {
+            try {
+                var so = screen.orientation;
+                if (so && so.type) {
+                    if (so.type.indexOf("landscape") !== -1) return false;
+                    if (so.type.indexOf("portrait") !== -1) return true;
+                }
+            } catch (e) { }
+            var legacy = (typeof window.orientation === "number") ? window.orientation : null;
+            if (legacy !== null) return Math.abs(legacy) === 90 ? false : true;
+            try {
+                if (mqPortrait) return mqPortrait.matches;
+            } catch (e) { }
             return window.innerHeight > window.innerWidth;
         }
+
         function tryLockLandscape() {
             try {
                 if (screen.orientation && screen.orientation.lock) {
@@ -177,14 +199,33 @@ WebFullscreen
                 }
             } catch (e) { /* 非全屏或权限受限，忽略 */ }
         }
+
+        // 统一入口：300ms 防抖，等浏览器把方向/宽高彻底切换完再判断，
+        // 避免读到「切换中途」的旧值导致提示层不消失。
+        // 玩家手动点「我已横屏，继续」后本会话不再强制盖屏（_rotateUserDismissed）。
+        var _rotateCheckTimer = null;
+        var _rotateUserDismissed = false;
+        var rotateOverlayClose = document.getElementById("rotate-overlay-close");
+        if (rotateOverlayClose) {
+            rotateOverlayClose.addEventListener("click", function () {
+                _rotateUserDismissed = true;
+                rotateOverlay.classList.remove("show");
+                // 玩家意图横屏：尝试锁横（即使不在全屏也试一次，安卓部分浏览器允许）
+                tryLockLandscape();
+            });
+        }
         function applyRotateOverlay() {
-            var portrait = isPortrait();
-            // 竖屏 + 触摸设备才盖提示层；桌面窄窗保持原样（黑边自适应）
-            rotateOverlay.classList.toggle("show", portrait && _isTouchDevice);
-            if (portrait) {
-                // 进入全屏后才允许锁横（配合按钮/点按手势）
-                if (document.fullscreenElement || document.webkitFullscreenElement) tryLockLandscape();
-            }
+            clearTimeout(_rotateCheckTimer);
+            _rotateCheckTimer = setTimeout(function () {
+                var portrait = isPortrait();
+                // 竖屏 + 触摸设备才盖提示层；桌面窄窗保持原样（黑边自适应）；
+                // 玩家手动点过「继续」则本会话不再自动盖屏
+                rotateOverlay.classList.toggle("show", portrait && _isTouchDevice && !_rotateUserDismissed);
+                if (portrait) {
+                    // 进入全屏后才允许锁横（配合按钮/点按手势）
+                    if (document.fullscreenElement || document.webkitFullscreenElement) tryLockLandscape();
+                }
+            }, 300);
         }
         // 三种信号都监听：媒体查询、方向变化事件、窗口尺寸变化（JS 兜底）
         if (mqPortrait.addEventListener) {
@@ -194,7 +235,11 @@ WebFullscreen
         }
         window.addEventListener("orientationchange", applyRotateOverlay);
         window.addEventListener("resize", applyRotateOverlay);
-        applyRotateOverlay();
+        // 首次载入：立即检查一次（不防抖），保证进页面就是竖屏时立刻提示
+        (function initOverlay() {
+            var portrait = isPortrait();
+            rotateOverlay.classList.toggle("show", portrait && _isTouchDevice && !_rotateUserDismissed);
+        })();
 
         // ============================================================
         // 移动端浏览器的「不打断」加固：

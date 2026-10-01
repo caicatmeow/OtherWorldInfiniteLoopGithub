@@ -5,13 +5,6 @@ html, body {
     height: 100%;
     overflow: hidden;
     background: #000;
-    /* 移动端加固：禁止选中文字/长按呼出菜单，触摸不产生滚动 */
-    user-select: none;
-    -webkit-user-select: none;
-    -webkit-touch-callout: none;
-    overscroll-behavior: none;
-    touch-action: none;
-    -webkit-text-size-adjust: 100%;
 }
 
 #unity-container {
@@ -29,8 +22,6 @@ html, body {
     height: 100%;
     background: #231F20;
     display: block;
-    /* 移动端加固：禁止浏览器把触摸当滚动/缩放，全部交给 Unity 处理 */
-    touch-action: none;
 }
 
 #unity-loading-bar {
@@ -108,136 +99,4 @@ html, body {
     z-index: 20;
     font-family: Arial, sans-serif;
     font-size: 14px;
-}
-
-/* ============================================================
-   旋转提示层（竖屏时盖住画面）
-   纯网页层：不依赖 Unity 加载，只盖画面、不暂停游戏，
-   玩家转横后 .show 移除自动消失。
-   ============================================================ */
-#unity-rotate-overlay {
-    position: fixed;
-    left: 0; top: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 30;
-    display: none;
-    align-items: center;
-    flex-direction: column;
-    justify-content: center;
-    background: rgba(10, 12, 16, 0.97);
-    color: #fff;
-    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-    text-align: center;
-}
-
-/* 手机横屏示意：竖起的手机图标旋转 90°（CSS 动画，无图片资源） */
-.rotate-anim {
-    width: 44px;
-    height: 84px;
-    border: 3px solid rgba(255, 255, 255, 0.92);
-    border-radius: 8px;
-    position: relative;
-    margin-bottom: 26px;
-    animation: rotate-phone 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-/* 手机听筒小点 */
-.rotate-anim::before {
-    content: "";
-    position: absolute;
-    left: 50%;
-    top: 6px;
-    transform: translateX(-50%);
-    width: 12px;
-    height: 3px;
-    border-radius: 2px;
-    background: rgba(255, 255, 255, 0.6);
-}
-@keyframes rotate-phone {
-    0%   { transform: rotate(0deg); }
-    25%  { transform: rotate(-90deg); }
-    55%  { transform: rotate(-90deg); }
-    80%  { transform: rotate(-180deg); }
-    100% { transform: rotate(-180deg); }
-}
-
-.rotate-text {
-    margin: 0;
-    font-size: 18px;
-    line-height: 1.7;
-    font-weight: 600;
-    letter-spacing: 1px;
-}
-.rotate-text span {
-    display: block;
-    margin-top: 6px;
-    font-size: 13px;
-    font-weight: 400;
-    opacity: 0.75;
-    letter-spacing: 0.5px;
-}
-
-/* 兜底按钮：方向检测万一不兼容/手机自动旋转被关，
-   玩家可手动关掉提示层继续游玩 */
-#rotate-overlay-close {
-    margin-top: 28px;
-    padding: 10px 22px;
-    border: 1px solid rgba(255, 255, 255, 0.4);
-    border-radius: 999px;
-    background: transparent;
-    color: #fff;
-    font-size: 14px;
-    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-    cursor: pointer;
-}
-#rotate-overlay-close:active { opacity: 0.75; }
-
-/* 竖屏时显示；横屏时隐藏（class 由 index.html 的 JS 切换） */
-#unity-rotate-overlay.show { display: flex; }
-
-/* ============================================================
-   手机端「进入全屏」按钮
-   桌面端不显示；手机上需要进入全屏才能锁横 + 更沉浸。
-   ============================================================ */
-#unity-mobile-enter-fullscreen {
-    position: fixed;
-    left: 50%;
-    bottom: 36px;
-    transform: translateX(-50%);
-    z-index: 25;
-    padding: 12px 28px;
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.55);
-    color: #fff;
-    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-    font-size: 15px;
-    letter-spacing: 1px;
-    cursor: pointer;
-    user-select: none;
-    -webkit-user-select: none;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.3s;
-}
-#unity-mobile-enter-fullscreen.visible {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-/* 仅移动端显示（触摸设备）；桌面端隐藏 */
-@media (hover: hover) and (pointer: fine) {
-    #unity-mobile-enter-fullscreen { display: none; }
-}
-
-/* 刘海屏/底部横条安全区：让全屏按钮不顶到「灵动岛」与底部小横条 */
-@supports (padding: env(safe-area-inset-bottom)) {
-    #unity-mobile-enter-fullscreen {
-        bottom: calc(28px + env(safe-area-inset-bottom));
-    }
-}
-
-/* 旋转提示层的图标动画在安全区内居中，天然避开刘海 */
-#unity-rotate-overlay {
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
 }

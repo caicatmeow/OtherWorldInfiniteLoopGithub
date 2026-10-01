@@ -3,13 +3,11 @@
 <!--
 WebFullscreen
 全屏自适应网页模板：Canvas 填满整个浏览器窗口，随窗口大小实时自适应缩放（桌面与移动端通用，无固定像素尺寸）。
-移动端竖屏适配：检测到竖屏环境时自动切换到横屏（能锁横的浏览器自动锁横；不能锁的显示旋转提示层），
-并禁止页面缩放/下拉刷新/长按菜单等浏览器默认行为，保证手机操作手感接近 App。
 -->
 <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=yes, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes">
     <title>Unity WebGL Player | Otherworld Infinite Loop</title>
     <link rel="stylesheet" href="TemplateData/style.css">
 </head>
@@ -26,12 +24,6 @@ WebFullscreen
         <div id="unity-footer">
             <div id="unity-fullscreen-button"></div>
         </div>
-        <!-- 旋转提示层：竖屏时盖住画面，提示玩家横屏游玩（不影响游戏继续运行/挂机） -->
-        <div id="unity-rotate-overlay">
-            <div class="rotate-anim" aria-hidden="true"></div>
-            <p class="rotate-text">请旋转设备横屏游玩<br><span>Please rotate your device to landscape</span></p>
-            <button type="button" id="rotate-overlay-close">我已横屏，继续 / I'm in landscape, continue</button>
-        </div>
     </div>
     <script>
 
@@ -41,7 +33,6 @@ WebFullscreen
         var progressBarFull = document.querySelector("#unity-progress-bar-full");
         var fullscreenButton = document.querySelector("#unity-fullscreen-button");
         var warningBanner = document.querySelector("#unity-warning");
-        var rotateOverlay = document.querySelector("#unity-rotate-overlay");
 
         // Shows a temporary message banner/ribbon for a few seconds, or
         // a permanent error message on top of the canvas if type=='error'.
@@ -146,160 +137,6 @@ WebFullscreen
             }
         });
 
-        // ============================================================
-        // 移动端竖屏适配：
-        // 1) 竖屏检测：优先用 CSS 媒体查询「orientation: portrait」，再用
-        //    宽高比做兜底（兼容部分老浏览器/PC 竖窗口），两者都监听；
-        // 2) 自动切回横屏：优先调用 Screen Orientation API 锁定横屏
-        //    （安卓 Chrome 全屏下生效）；不支持锁横的环境（尤其 iOS Safari）
-        //    只显示旋转提示层，玩家手动转横后自动消失；
-        // 3) 旋转提示层是纯网页层，不依赖 Unity，加载中/加载后都有效；
-        //    且只盖画面不暂停游戏——停留竖屏期间挂机进度照常推进。
-        // ============================================================
-        var mqPortrait = window.matchMedia("(orientation: portrait)");
-        // 是否移动/触摸设备：旋转提示只用于手机平板，桌面竖窗口不打扰（正常黑边）
-        function isTouchDevice() {
-            return ("ontouchstart" in window) ||
-                   (navigator.maxTouchPoints > 0) ||
-                   /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-        }
-        var _isTouchDevice = isTouchDevice();
-
-        // 判断当前是否竖屏。注意：不能用「窗口宽高比」作为第一信号——
-        // 手机上 orientationchange 事件触发时，窗口宽高常常还是旧的（未切换完），
-        // 会误判导致提示层卡住。顺序必须为：
-        //   1) screen.orientation 角度（方向事件后立即是最新值，最可靠）
-        //   2) 老式 window.orientation
-        //   3) CSS 媒体查询 orientation
-        //   4) 窗口宽高比（仅作终极兜底）
-        function isPortrait() {
-            try {
-                var so = screen.orientation;
-                if (so && so.type) {
-                    if (so.type.indexOf("landscape") !== -1) return false;
-                    if (so.type.indexOf("portrait") !== -1) return true;
-                }
-            } catch (e) { }
-            var legacy = (typeof window.orientation === "number") ? window.orientation : null;
-            if (legacy !== null) return Math.abs(legacy) === 90 ? false : true;
-            try {
-                if (mqPortrait) return mqPortrait.matches;
-            } catch (e) { }
-            return window.innerHeight > window.innerWidth;
-        }
-
-        function tryLockLandscape() {
-            try {
-                if (screen.orientation && screen.orientation.lock) {
-                    screen.orientation.lock("landscape").catch(function () { /* 不支持/未全屏，忽略 */ });
-                } else if (screen.lockOrientation) {
-                    screen.lockOrientation("landscape");
-                } else if (screen.msLockOrientation) {
-                    screen.msLockOrientation("landscape");
-                }
-            } catch (e) { /* 非全屏或权限受限，忽略 */ }
-        }
-
-        // 统一入口：300ms 防抖，等浏览器把方向/宽高彻底切换完再判断，
-        // 避免读到「切换中途」的旧值导致提示层不消失。
-        // 玩家手动点「我已横屏，继续」后本会话不再强制盖屏（_rotateUserDismissed）。
-        var _rotateCheckTimer = null;
-        var _rotateUserDismissed = false;
-        var rotateOverlayClose = document.getElementById("rotate-overlay-close");
-        if (rotateOverlayClose) {
-            rotateOverlayClose.addEventListener("click", function () {
-                _rotateUserDismissed = true;
-                rotateOverlay.classList.remove("show");
-                // 玩家意图横屏：尝试锁横（即使不在全屏也试一次，安卓部分浏览器允许）
-                tryLockLandscape();
-            });
-        }
-        function applyRotateOverlay() {
-            clearTimeout(_rotateCheckTimer);
-            _rotateCheckTimer = setTimeout(function () {
-                var portrait = isPortrait();
-                // 竖屏 + 触摸设备才盖提示层；桌面窄窗保持原样（黑边自适应）；
-                // 玩家手动点过「继续」则本会话不再自动盖屏
-                rotateOverlay.classList.toggle("show", portrait && _isTouchDevice && !_rotateUserDismissed);
-                if (portrait) {
-                    // 进入全屏后才允许锁横（配合按钮/点按手势）
-                    if (document.fullscreenElement || document.webkitFullscreenElement) tryLockLandscape();
-                }
-            }, 300);
-        }
-        // 三种信号都监听：媒体查询、方向变化事件、窗口尺寸变化（JS 兜底）
-        if (mqPortrait.addEventListener) {
-            mqPortrait.addEventListener("change", applyRotateOverlay);
-        } else {
-            mqPortrait.addListener(applyRotateOverlay);
-        }
-        window.addEventListener("orientationchange", applyRotateOverlay);
-        window.addEventListener("resize", applyRotateOverlay);
-        // 首次载入：立即检查一次（不防抖），保证进页面就是竖屏时立刻提示
-        (function initOverlay() {
-            var portrait = isPortrait();
-            rotateOverlay.classList.toggle("show", portrait && _isTouchDevice && !_rotateUserDismissed);
-        })();
-
-        // ============================================================
-        // 移动端浏览器的「不打断」加固：
-        //  - 双击/双指缩放、下拉刷新、橡皮筋回弹、长按选字/呼出菜单都是
-        //    浏览器默认行为，会打断点击操作、吞掉触摸事件，必须统一关掉；
-        //  - 视觉视口随地址栏弹收变化时，让画布同步跟随浏览器视图。
-        //    （canvas.width/height 的像素同步交给 Unity 自动处理；
-        //    这里保证容器始终对准可见区域。）
-        // ============================================================
-        document.addEventListener("touchmove", function (e) {
-            if (e.touches.length > 1) e.preventDefault();
-        }, { passive: false });
-        document.addEventListener("gesturestart", function (e) { e.preventDefault(); });
-        document.addEventListener("dblclick", function (e) { e.preventDefault(); });
-        document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
-        // 阻止长按拖动选中（iOS Safari 的 -webkit-user-select 由 style.css 兜底）
-        document.addEventListener("selectstart", function (e) { e.preventDefault(); });
-
-        // 手机端「进入全屏」按钮：进入全屏后 Android Chrome 才能锁横，
-        // iOS 也只有在全屏（部分版本）才允许锁横，同时给沉浸式体验。
-        // 桌面端无此按钮（模板默认仅移动端显示，见 style.css）。
-        var fullscreenEntryBtn = document.createElement("div");
-        fullscreenEntryBtn.id = "unity-mobile-enter-fullscreen";
-        fullscreenEntryBtn.textContent = "进入全屏 / Fullscreen";
-        fullscreenEntryBtn.addEventListener("click", function () {
-            var root = document.documentElement;
-            if (root.requestFullscreen) root.requestFullscreen();
-            else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
-        });
-        // 全屏成功后再请求锁横（部分浏览器要求全屏后才允许）
-        function onFullscreenChange() {
-            if (document.fullscreenElement || document.webkitFullscreenElement) {
-                fullscreenEntryBtn.style.display = "none";
-                if (isPortrait()) tryLockLandscape();
-            } else {
-                fullscreenEntryBtn.style.display = "";
-                fullscreenEntryBtn.classList.add("visible");
-            }
-            applyRotateOverlay();
-        }
-        canvas.parentElement.insertBefore(fullscreenEntryBtn, canvas.nextSibling);
-        document.addEventListener("fullscreenchange", onFullscreenChange);
-        document.addEventListener("webkitfullscreenchange", onFullscreenChange);
-        // 初始化时执行一次：未全屏则手机端显示「进入全屏」按钮
-        onFullscreenChange();
-        // 移动端初次轻点画面时顺带请求全屏（体验「一点即沉浸」）
-        var didAutoFullscreen = false;
-        function maybeAutoFullscreen() {
-            if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
-            if (didAutoFullscreen) return;
-            if (document.fullscreenElement || document.webkitFullscreenElement) { didAutoFullscreen = true; return; }
-            didAutoFullscreen = true;
-            var root = document.documentElement;
-            if (root.requestFullscreen) root.requestFullscreen().catch(function () {});
-            else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
-        }
-        // 只监听游戏画布本身的一次性点击，避免误触发其它 UI
-        canvas.addEventListener("click", maybeAutoFullscreen, { once: true });
-        canvas.addEventListener("touchstart", maybeAutoFullscreen, { once: true, passive: true });
-
         var buildUrl = "Build";
         var loaderUrl = buildUrl + "/github-export.loader.js";
         var config = {
@@ -331,9 +168,6 @@ WebFullscreen
                 canvas.focus();
                 fullscreenButton.onclick = () => {
                     unityInstance.SetFullscreen(1);
-                    // 全屏后若仍是竖屏则尝试自动锁横
-                    if (document.fullscreenElement || document.webkitFullscreenElement) tryLockLandscape();
-                    else setTimeout(tryLockLandscape, 400);
                 };
             }).catch((message) => {
                 alert(message);
